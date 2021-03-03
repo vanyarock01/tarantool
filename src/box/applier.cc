@@ -109,6 +109,8 @@ applier_log_error(struct applier *applier, struct error *e)
 	case ER_PASSWORD_MISMATCH:
 	case ER_XLOG_GAP:
 	case ER_TOO_EARLY_SUBSCRIBE:
+	case ER_SYNC_QUORUM_TIMEOUT:
+	case ER_SYNC_ROLLBACK:
 		say_info("will retry every %.2lf second",
 			 replication_reconnect_interval());
 		break;
@@ -526,7 +528,8 @@ applier_wait_register(struct applier *applier, uint64_t row_count)
 	while (true) {
 		coio_read_xrow(coio, ibuf, &row);
 		applier->last_row_time = ev_monotonic_now(loop());
-		if (iproto_type_is_dml(row.type)) {
+		if (iproto_type_is_dml(row.type) ||
+		    row.type == IPROTO_CONFIRM) {
 			vclock_follow_xrow(&replicaset.vclock, &row);
 			if (apply_final_join_row(&row) != 0)
 				diag_raise();

@@ -381,6 +381,10 @@ relay_final_join(int fd, uint64_t sync, struct vclock *start_vclock,
 		relay_delete(relay);
 	});
 
+	/* \sa relay_initial_join(). */
+	if (txn_limbo_wait_confirm(&txn_limbo) != 0)
+		diag_raise();
+
 	relay->r = recovery_new(wal_dir(), false, start_vclock);
 	vclock_copy(&relay->stop_vclock, stop_vclock);
 
