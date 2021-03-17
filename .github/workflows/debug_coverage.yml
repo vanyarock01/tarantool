@@ -15,7 +15,7 @@ jobs:
     # We want to run on external PRs, but not on our own internal PRs
     # as they'll be run by the push to the branch.
     if: ( github.event_name == 'push' ||
-        github.event.pull_request.head.repo.full_name != github.repository ) &&
+        github.event_name == 'pull_request') &&
         ! endsWith(github.ref, '-notest')
 
     runs-on: ubuntu-18.04
@@ -25,29 +25,90 @@ jobs:
 
     # image built by .gitlab.mk instructions and targets from .travis.mk
     container:
-      image: docker.io/tarantool/testing:debian-stretch
+      image: docker.io/tarantool/testing:debian-buster
       # Our testing expects that the init process (PID 1) will
       # reap orphan processes. At least the following test leans
       # on it: app-tap/gh-4983-tnt-e-assert-false-hangs.test.lua.
       options: '--init'
 
     steps:
-      - uses: actions/checkout@v1
-      - uses: ./.github/actions/environment
+      # finds PR if exists (detects only on push and never on pull_request)
+      # WARNING !!! use in these ways only:
+      #   on push: steps.findPr.outputs.pr
+      #   on pull_request: github.event.pull_request.number
+      - name: Find the PR associated with this push on push trigger, if there is one.
+        uses: jwalton/gh-find-current-pr@v1
+        id: findPr
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      # Run always but once - w/o PR on push otherwise on pull_request.
+      # To avoid of issue https://github.com/coverallsapp/github-action/issues/55
+      # sources checkout should be based on 2nd version and later, to support it
+      # newer docker image is used tarantool/testing:debian-buster
+      - name: Sources checkout
+        if: ( steps.findPr.outputs.pr == false && github.event_name == 'push' ) ||
+            github.event_name == 'pull_request'
+        uses: actions/checkout@v2.3.4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      # run always but once - w/o PR on push otherwise on pull_request
+      - name: Set environment
+        if: ( steps.findPr.outputs.pr == false && github.event_name == 'push' ) ||
+            github.event_name == 'pull_request'
+        uses: ./.github/actions/environment
+      # run always but once - w/o PR on push otherwise on pull_request
       - name: test
+        if: ( steps.findPr.outputs.pr == false && github.event_name == 'push' ) ||
+            github.event_name == 'pull_request'
         run: ${CI_MAKE} test_coverage_debian_no_deps
-        env:
-          COVERALLS_TOKEN: ${{ secrets.COVERALLS_TOKEN }}
+      # run always but once - w/o PR on push otherwise on pull_request
+      - name: Upload coverage.info results to coverals.io
+        if: success() &&
+            ( ( steps.findPr.outputs.pr == false && github.event_name == 'push' ) ||
+            github.event_name == 'pull_request' )
+        uses: coverallsapp/github-action@v1.1.2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path-to-lcov: ./coverage.info
+      # run only for pull_request on test success
+      - name: Extract branch name to use for PR message
+        if: success() && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          branch_name=${{ github.head_ref }}
+          if ${{ github.event_name != 'pull_request' }} ; then
+            branch_name=${{ github.ref }}
+            branch_name=${branch_name#refs/heads/}
+          fi
+          echo BRANCH_NAME=$branch_name | tee -a $GITHUB_ENV
+      # run only for pull_request on test success
+      # use only available github.event.pull_request.number
+      - name: Create comment in PR if it exists
+        if: success() && github.event_name == 'pull_request'
+        uses: peter-evans/create-or-update-comment@v1
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            Check coveralls results on coveralls.io site
+            [![Coveralls Status](https://coveralls.io/repos/github/tarantool/tarantool/badge.svg)](https://coveralls.io/github/tarantool/tarantool?branch=${{ env.BRANCH_NAME }})
+      # run on failure only
       - name: call action to send Telegram message on failure
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_CORE_TOKEN }}
           TELEGRAM_TO: ${{ secrets.TELEGRAM_CORE_TO }}
         uses: ./.github/actions/send-telegram-notify
         if: failure()
+      # run always but once - w/o PR on push otherwise on pull_request
+      # for failed tests either Coveralls results
       - name: artifacts
         uses: actions/upload-artifact@v2
-        if: failure()
+        if: always() &&
+            ( ( steps.findPr.outputs.pr == false && github.event_name == 'push' ) ||
+            github.event_name == 'pull_request' )
         with:
           name: debug
           retention-days: 21
-          path: test/var/artifacts
+          path: |
+            test/var/artifacts
+            *.info
