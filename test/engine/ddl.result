@@ -2538,9 +2538,8 @@ end;
 ...
 function check_fiber()
     _ = fiber.create(function() gen_load() ch:put(true) end)
+    assert(ch:get(10) == true)
     _ = box.space.test:create_index('sk', {unique = false, parts = {2, 'unsigned'}})
-
-    ch:get(10)
 
     local index = box.space.test.index
     if not check_equal("1st step secondary keys", index.pk:count(), index.sk:count()) then
@@ -2548,9 +2547,8 @@ function check_fiber()
     end
 
     _ = fiber.create(function() gen_load() ch:put(true) end)
+    assert(ch:get(10) == true)
     _ = box.space.test:create_index('tk', {unique = true, parts = {3, 'unsigned'}})
-
-    ch:get(10)
 
     index = box.space.test.index
     if not check_equal("2nd step secondary keys", index.pk:count(), index.sk:count()) or
