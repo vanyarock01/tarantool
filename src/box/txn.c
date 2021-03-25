@@ -47,11 +47,11 @@ int64_t txn_last_psn = 0;
 /* Txn cache. */
 static struct stailq txn_cache = {NULL, &txn_cache.first};
 
-static int
-txn_on_stop(struct trigger *trigger, void *event);
+static void
+txn_abort_trigger0(struct trigger *trigger);
 
 static int
-txn_on_yield(struct trigger *trigger, void *event);
+txn_abort_trigger(struct trigger *trigger, void *event);
 
 static void
 txn_run_rollback_triggers(struct txn *txn, struct rlist *triggers);
@@ -275,8 +275,9 @@ txn_begin(void)
 	txn->fiber = NULL;
 	fiber_set_txn(fiber(), txn);
 	/* fiber_on_yield is initialized by engine on demand */
-	trigger_create(&txn->fiber_on_stop, txn_on_stop, NULL, NULL);
-	trigger_add(&fiber()->on_stop, &txn->fiber_on_stop);
+	trigger_create(&txn->fiber_abort, txn_abort_trigger, NULL,
+		       txn_abort_trigger0);
+	trigger_add(&fiber()->on_stop, &txn->fiber_abort);
 	/*
 	 * By default all transactions may yield.
 	 * It's a responsibility of an engine to disable yields
@@ -746,9 +747,7 @@ txn_prepare(struct txn *txn)
 	assert(rlist_empty(&txn->conflict_list));
 	assert(rlist_empty(&txn->conflicted_by_list));
 
-	trigger_clear(&txn->fiber_on_stop);
-	if (!txn_has_flag(txn, TXN_CAN_YIELD))
-		trigger_clear(&txn->fiber_on_yield);
+	trigger_clear(&txn->fiber_abort);
 
 	txn->start_tm = ev_monotonic_now(loop());
 	txn->status = TXN_PREPARED;
@@ -969,9 +968,7 @@ txn_rollback(struct txn *txn)
 {
 	assert(txn == in_txn());
 	txn->status = TXN_ABORTED;
-	trigger_clear(&txn->fiber_on_stop);
-	if (!txn_has_flag(txn, TXN_CAN_YIELD))
-		trigger_clear(&txn->fiber_on_yield);
+	trigger_clear(&txn->fiber_abort);
 	txn->signature = TXN_SIGNATURE_ROLLBACK;
 	txn_complete_fail(txn);
 	fiber_set_txn(fiber(), NULL);
@@ -994,11 +991,12 @@ txn_can_yield(struct txn *txn, bool set)
 	bool could = txn_has_flag(txn, TXN_CAN_YIELD);
 	if (set && !could) {
 		txn_set_flags(txn, TXN_CAN_YIELD);
-		trigger_clear(&txn->fiber_on_yield);
+		trigger_clear(&txn->fiber_abort);
+		trigger_add(&fiber()->on_stop, &txn->fiber_abort);
 	} else if (!set && could) {
 		txn_clear_flags(txn, TXN_CAN_YIELD);
-		trigger_create(&txn->fiber_on_yield, txn_on_yield, NULL, NULL);
-		trigger_add(&fiber()->on_yield, &txn->fiber_on_yield);
+		trigger_clear(&txn->fiber_abort);
+		trigger_add(&fiber()->on_yield, &txn->fiber_abort);
 	}
 	return could;
 }
@@ -1192,14 +1190,16 @@ txn_savepoint_release(struct txn_savepoint *svp)
 	rlist_cut_before(&discard, &txn->savepoints, rlist_next(&svp->link));
 }
 
-static int
-txn_on_stop(struct trigger *trigger, void *event)
+static void
+txn_abort_trigger0(struct trigger *trigger)
 {
+	// Runs when cant yield on stop.
 	(void) trigger;
-	(void) event;
-	txn_rollback(in_txn());                 /* doesn't yield or fail */
+	struct txn *txn = in_txn();
+	assert(txn != NULL);
+	assert(!txn_has_flag(txn, TXN_CAN_YIELD));
+	txn_rollback(txn);                 /* doesn't yield or fail */
 	fiber_gc();
-	return 0;
 }
 
 /**
@@ -1220,14 +1220,21 @@ txn_on_stop(struct trigger *trigger, void *event)
  * interactive transaction support in memtx.
  */
 static int
-txn_on_yield(struct trigger *trigger, void *event)
+txn_abort_trigger(struct trigger *trigger, void *event)
 {
+	// Runs when empty on stop.
+	// Runs when non empty but can yield on stop.
+	// Runs on yield when cant yield.
 	(void) trigger;
 	(void) event;
 	struct txn *txn = in_txn();
 	assert(txn != NULL);
-	assert(!txn_has_flag(txn, TXN_CAN_YIELD));
-	txn_rollback_to_svp(txn, NULL);
-	txn_set_flags(txn, TXN_IS_ABORTED_BY_YIELD);
+	if (!txn_has_flag(txn, TXN_CAN_YIELD)) {
+		txn_rollback_to_svp(txn, NULL);
+		txn_set_flags(txn, TXN_IS_ABORTED_BY_YIELD);
+	} else {
+		txn_rollback(txn);
+		fiber_gc();
+	}
 	return 0;
 }

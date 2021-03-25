@@ -354,16 +354,22 @@ fiber_on_stop(struct fiber *f)
 	 * The most common case is when the list is empty. Do an
 	 * inlined check before calling trigger_run().
 	 */
-	if (rlist_empty(&f->on_stop))
+	if (rlist_empty(&f->on_stop) && rlist_empty(&f->on_yield))
 		return;
 	if (trigger_run(&f->on_stop, f) != 0)
 		panic("On_stop triggers can't fail");
+	trigger_destroy(&f->on_yield);
 	/*
 	 * All on_stop triggers are supposed to remove themselves.
 	 * So as no to waste time on that here, and to make them
 	 * all work uniformly.
 	 */
 	assert(rlist_empty(&f->on_stop));
+	/*
+	 * Yield triggers during destruction should not set any
+	 * new triggers.
+	 */
+	assert(rlist_empty(&f->on_yield));
 }
 
 static void
@@ -878,6 +884,8 @@ fiber_recycle(struct fiber *fiber)
 	assert(diag_is_empty(&fiber->diag));
 	/* no pending wakeup */
 	assert(rlist_empty(&fiber->state));
+	assert(rlist_empty(&fiber->on_stop));
+	assert(rlist_empty(&fiber->on_yield));
 	bool has_custom_stack = fiber->flags & FIBER_CUSTOM_STACK;
 	fiber_stack_recycle(fiber);
 	fiber_reset(fiber);

@@ -351,12 +351,7 @@ struct txn {
 	 * Triggers on fiber yield to abort transaction for
 	 * for in-memory engine.
 	 */
-	struct trigger fiber_on_yield;
-	/**
-	 * Trigger on fiber stop, to rollback transaction
-	 * in case a fiber stops (all engines).
-	 */
-	struct trigger fiber_on_stop;
+	struct trigger fiber_abort;
 	/** Commit and rollback triggers. */
 	struct rlist on_commit, on_rollback, on_wal_write;
 	/**
