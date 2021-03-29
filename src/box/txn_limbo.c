@@ -45,6 +45,8 @@ txn_limbo_create(struct txn_limbo *limbo)
 	limbo->owner_id = REPLICA_ID_NIL;
 	fiber_cond_create(&limbo->wait_cond);
 	vclock_create(&limbo->vclock);
+	vclock_create(&limbo->promote_term_map);
+	limbo->promote_greatest_term = 0;
 	limbo->confirmed_lsn = 0;
 	limbo->rollback_count = 0;
 	limbo->is_in_rollback = false;
@@ -643,6 +645,19 @@ complete:
 void
 txn_limbo_process(struct txn_limbo *limbo, const struct synchro_request *req)
 {
+	uint64_t term = req->term;
+	uint32_t origin = req->origin_id;
+	if (txn_limbo_replica_term(limbo, origin) < term) {
+		vclock_follow(&limbo->promote_term_map, origin, term);
+		if (term > limbo->promote_greatest_term) {
+			limbo->promote_greatest_term = term;
+		} else if (req->type == IPROTO_PROMOTE) {
+			/*
+			 * PROMOTE for outdated term. Ignore.
+			 */
+			return;
+		}
+	}
 	if (req->replica_id == REPLICA_ID_NIL) {
 		/*
 		 * The limbo was empty on the instance issuing the request.
