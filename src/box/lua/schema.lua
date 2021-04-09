@@ -1,6 +1,7 @@
 -- schema.lua (internal file)
 --
 local ffi = require('ffi')
+local fiber = require('fiber')
 local msgpack = require('msgpack')
 local fun = require('fun')
 local log = require('log')
@@ -108,6 +109,17 @@ ffi.cdef[[
 
     void password_prepare(const char *password, int len,
                           char *out, int out_len);
+
+    struct session {
+        bool graceful_shutdown;
+        bool shutdown_ready;
+    };
+
+    struct session *
+    next_session(struct session *session);
+
+    bool
+    shutdown_ready(struct session *session);
 
     enum priv_type {
         PRIV_R = 1,
@@ -3133,3 +3145,36 @@ end
 setmetatable(box.space, { __serialize = box_space_mt })
 
 box.NULL = msgpack.NULL
+
+local function active_sessions()
+     local cur_session = builtin.next_session(ffi.NULL)
+     return function ()
+         if cur_session ~= ffi.NULL then
+             local prev_session = cur_session
+             cur_session = builtin.next_session(cur_session)
+             return prev_session
+         end
+         return nil
+     end
+ end
+
+
+ box.ctl.on_shutdown(function()
+     local cond = fiber.cond()
+     local active = 0
+     for session in active_sessions() do
+         active = active + 1
+         fiber.create(function()
+             while not session.shutdown_ready do
+                 fiber.yield()
+             end
+             active = active - 1
+             if active == 0 then
+                 cond:signal()
+             end
+         end)
+     end
+     while active > 0 do
+         cond:wait()
+     end
+ end)

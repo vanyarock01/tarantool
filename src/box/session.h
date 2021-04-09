@@ -103,6 +103,8 @@ struct session_meta {
  * 0 sid is reserved to mean 'no session'.
  */
 struct session {
+    	bool graceful_shutdown;
+    	bool shutdown_ready;
 	/** Session id. */
 	uint64_t id;
 	/** SQL Tarantool Default storage engine. */
@@ -123,6 +125,7 @@ struct session {
 	struct credentials credentials;
 	/** Trigger for fiber on_stop to cleanup created on-demand session */
 	struct trigger fiber_on_stop;
+	struct rlist in_active_list;
 };
 
 struct session_vtab {
@@ -265,6 +268,18 @@ effective_user(void)
 
 /** Global on-disconnect triggers. */
 extern struct rlist session_on_disconnect;
+/** Global list with all active sessions. */
+extern struct rlist active_sessions;
+
+/**
+ *
+ * @param session session
+ * @retval NULL if session is last in list
+ * @retval First session if session param is NULL
+ * or next session in order of active_sessions list.
+ */
+struct session *
+next_session(struct session *session);
 
 void
 session_storage_cleanup(int sid);

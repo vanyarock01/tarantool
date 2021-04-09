@@ -36,6 +36,7 @@
 #include <msgpuck.h>
 #include <small/ibuf.h>
 #include <small/obuf.h>
+#include <on_shutdown.h>
 #include "third_party/base64.h"
 
 #include "version.h"
@@ -252,11 +253,7 @@ iproto_msg_decode(struct iproto_msg *msg, const char **pos, const char *reqend,
 		  bool *stop_input);
 
 static inline void
-iproto_msg_delete(struct iproto_msg *msg)
-{
-	mempool_free(&iproto_msg_pool, msg);
-	iproto_resume();
-}
+iproto_msg_delete(struct iproto_msg *msg);
 
 /**
  * A single global queue for all requests in all connections. All
@@ -487,6 +484,7 @@ struct iproto_connection
 	 */
 	enum iproto_connection_state state;
 	struct rlist in_stop_list;
+	int requests_in_flight;
 	/**
 	 * Kharon is used to implement box.session.push().
 	 * When a new push is ready, tx uses kharon to notify
@@ -552,6 +550,18 @@ iproto_check_msg_max(void)
 	return request_count > (size_t) iproto_msg_max;
 }
 
+static inline void
+iproto_msg_delete(struct iproto_msg *msg)
+{
+	struct iproto_connection *con = msg->connection;
+	con->requests_in_flight--;
+	struct session *session = con->session;
+	if (con->requests_in_flight == 0 && session != NULL && !session->graceful_shutdown)
+		session->shutdown_ready = true;
+	mempool_free(&iproto_msg_pool, msg);
+	iproto_resume();
+}
+
 static struct iproto_msg *
 iproto_msg_new(struct iproto_connection *con)
 {
@@ -570,6 +580,9 @@ iproto_msg_new(struct iproto_connection *con)
 	msg->close_connection = false;
 	msg->connection = con;
 	rmean_collect(rmean_net, IPROTO_REQUESTS, 1);
+	con->requests_in_flight++;
+	if (con->session != NULL && !con->session->graceful_shutdown)
+		con->session->shutdown_ready = false;
 	return msg;
 }
 
@@ -1116,6 +1129,7 @@ iproto_connection_new(int fd)
 	iproto_wpos_create(&con->wend, con->tx.p_obuf);
 	con->parse_size = 0;
 	con->long_poll_count = 0;
+	con->requests_in_flight = 0;
 	con->session = NULL;
 	rlist_create(&con->in_stop_list);
 	/* It may be very awkward to allocate at close. */
@@ -1290,6 +1304,7 @@ iproto_msg_decode(struct iproto_msg *msg, const char **pos, const char *reqend,
 			goto error;
 		cmsg_init(&msg->base, sql_route);
 		break;
+	case IPROTO_SHUTDOWN:
 	case IPROTO_PING:
 		cmsg_init(&msg->base, misc_route);
 		break;
@@ -1704,6 +1719,12 @@ tx_process_misc(struct cmsg *m)
 			iproto_reply_ok_xc(out, msg->header.sync,
 					   ::schema_version);
 			break;
+                case IPROTO_SHUTDOWN:
+                        shutdown(con->session->meta.fd, SHUT_RD);
+                        con->session->shutdown_ready = true;
+                        iproto_reply_ok_xc(out, msg->header.sync,
+                                           ::schema_version);
+                        break;
 		case IPROTO_PING:
 			iproto_reply_ok_xc(out, msg->header.sync,
 					   ::schema_version);
@@ -1888,8 +1909,6 @@ net_send_msg(struct cmsg *m)
 	if (evio_has_fd(&con->output)) {
 		if (! ev_is_active(&con->output))
 			ev_feed_event(con->loop, &con->output, EV_WRITE);
-	} else if (iproto_connection_is_idle(con)) {
-		iproto_connection_close(con);
 	}
 	iproto_msg_delete(msg);
 }
@@ -2184,13 +2203,51 @@ iproto_session_push(struct session *session, struct port *port)
 	return 0;
 }
 
+static int
+iproto_session_push_shutdown(struct session *session)
+{
+	struct iproto_connection *con =
+		(struct iproto_connection *) session->meta.connection;
+	struct obuf_svp svp;
+	iproto_reply_shutdown(con->tx.p_obuf, &svp, 0,
+			   ::schema_version);
+	if (! con->tx.is_push_sent)
+		tx_begin_push(con);
+	else
+		con->tx.is_push_pending = true;
+	return 0;
+}
+
 /** }}} */
+
+static int
+graceful_shutdown(void *arg)
+{
+        (void) arg;
+	(void) iproto_session_push_shutdown;
+//        if (evio_service_is_active(&binary))
+//                evio_service_stop(&binary);
+//        struct session *session;
+//        rlist_foreach_entry(session, &active_sessions, in_active_list) {
+//                struct iproto_connection *con = container_of(&session, struct iproto_connection, session);
+//                if (con->session->graceful_shutdown) {
+//			iproto_session_push_shutdown(session);
+//                } else {
+//                        shutdown(con->session->meta.fd, SHUT_RD);
+//                }
+//        }
+
+        return 0;
+}
 
 /** Initialize the iproto subsystem and start network io thread */
 void
 iproto_init(void)
 {
 	slab_cache_create(&net_slabc, &runtime);
+
+        if (box_on_shutdown(NULL, graceful_shutdown, NULL) != 0)
+                panic("failed to register iproto shutdown function");
 
 	if (cord_costart(&net_cord, "iproto", net_cord_f, NULL))
 		panic("failed to initialize iproto thread");

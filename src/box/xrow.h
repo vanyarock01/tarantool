@@ -691,6 +691,17 @@ void
 iproto_reply_chunk(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
 		   uint32_t schema_version);
 
+/**
+ * Write the SHUTDOWN header.
+ * @param buf Out buffer.
+ * @param svp Savepoint of the header beginning.
+ * @param sync Request sync.
+ * @param schema_version Schema version.
+ */
+void
+iproto_reply_shutdown(struct obuf *buf, struct obuf_svp *svp, uint64_t sync,
+		      uint32_t schema_version);
+
 /** Write error directly to a socket. */
 void
 iproto_write_error(int fd, const struct error *e, uint32_t schema_version,
