@@ -49,7 +49,7 @@ end;
 test_run:cmd("setopt delimiter ''");
 
 garbage_size = 500
-corruption_offset = 15000
+corruption_offset = 5000
 
 test_run:cmd("create server test with script='box/gh-5422-broken_snapshot.lua'")
 test_run:cmd("start server test")
@@ -92,7 +92,6 @@ test_run:cmd("switch default")
 -- Count of valid data is greater than we truncate snapshot.
 valid_data_count_2 = check_count_valid_snapshot_data(items_count)
 assert(valid_data_count_2 > 0)
-assert(valid_data_count_2 > valid_data_count_1)
 
 -- Restore snapshot and write big garbage at the start of the file
 write_garbage_with_restore_or_save(snapshot, 5000, garbage_size, true)

@@ -69,7 +69,7 @@ test_run:cmd("setopt delimiter ''");
 garbage_size = 500
 ---
 ...
-corruption_offset = 15000
+corruption_offset = 5000
 ---
 ...
 test_run:cmd("create server test with script='box/gh-5422-broken_snapshot.lua'")
@@ -178,10 +178,6 @@ valid_data_count_2 = check_count_valid_snapshot_data(items_count)
 ---
 ...
 assert(valid_data_count_2 > 0)
----
-- true
-...
-assert(valid_data_count_2 > valid_data_count_1)
 ---
 - true
 ...
