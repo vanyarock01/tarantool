@@ -210,6 +210,11 @@ struct xrow_update_op {
 	 * update tree.
 	 */
 	struct json_lexer lexer;
+	/**
+	 * Flag, indicates that this operation,
+	 * applies to root array.
+	 */
+	bool is_root_array;
 };
 
 /**
