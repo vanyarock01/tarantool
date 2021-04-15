@@ -723,11 +723,11 @@ xrow_update_op_decode(struct xrow_update_op *op, int op_num, int index_base,
 	 */
 	op->token_type = JSON_TOKEN_NUM;
 	op->is_token_consumed = false;
-	op->is_root_array = true;
 	int32_t field_no = 0;
 	switch(mp_typeof(**expr)) {
 	case MP_INT:
 	case MP_UINT: {
+		op->is_for_root = true;
 		json_lexer_create(&op->lexer, NULL, 0, 0);
 		if (xrow_update_mp_read_int32(op, expr, &field_no) != 0)
 			return -1;
@@ -749,7 +749,8 @@ xrow_update_op_decode(struct xrow_update_op *op, int op_num, int index_base,
 					  &field_no) == 0) {
 			op->field_no = (int32_t) field_no;
 			op->lexer.offset = len;
-			goto check_json_eof;
+			op->is_for_root = true;
+			break;
 		}
 		struct json_token token;
 		int rc = json_lexer_next_token(&op->lexer, &token);
@@ -772,9 +773,7 @@ xrow_update_op_decode(struct xrow_update_op *op, int op_num, int index_base,
 				 tt_cstr(path, len));
 			return -1;
 		}
-check_json_eof:
-		if (!json_lexer_is_eof(&op->lexer))
-			op->is_root_array = false;
+		op->is_for_root = json_lexer_is_eof(&op->lexer);
 		break;
 	}
 	default:

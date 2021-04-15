@@ -1138,7 +1138,9 @@ s:update({1}, {{'!', 'field4.key1', 0}})
 s:drop()
 ---
 ...
--- Arrays
+--
+-- Autofill of nils is baned for nested arrays.
+--
 s = box.schema.create_space('test', {engine = engine})
 ---
 ...
@@ -1149,6 +1151,8 @@ s:insert({1, 2, {11, 22}})
 ---
 - [1, 2, [11, 22]]
 ...
+-- When two operations are used for one array, internally it looks very similar
+-- to how the root array is represented. Still the ban should work.
 op1 = {'=', '[3][1]', 11}
 ---
 ...
