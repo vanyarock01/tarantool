@@ -125,6 +125,7 @@ struct session {
 	struct credentials credentials;
 	/** Trigger for fiber on_stop to cleanup created on-demand session */
 	struct trigger fiber_on_stop;
+	struct rlist in_active_list;
 };
 
 struct session_vtab {
@@ -181,6 +182,9 @@ session_find(uint64_t sid);
 extern struct rlist session_on_connect;
 
 extern struct rlist session_on_auth;
+
+/** Global list with all active sessions. */
+extern struct rlist active_sessions;
 
 /**
  * Get the current session from @a fiber

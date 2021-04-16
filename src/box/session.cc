@@ -70,6 +70,7 @@ struct mempool session_pool;
 RLIST_HEAD(session_on_connect);
 RLIST_HEAD(session_on_disconnect);
 RLIST_HEAD(session_on_auth);
+RLIST_HEAD(active_sessions);
 
 static inline uint64_t
 sid_max(void)
@@ -157,6 +158,8 @@ session_create(enum session_type type)
 		diag_set(OutOfMemory, 0, "session hash", "new session");
 		return NULL;
 	}
+	rlist_create(&session->in_active_list);
+	rlist_add_entry(&active_sessions, session, in_active_list);
 	return session;
 }
 
@@ -262,6 +265,13 @@ session_destroy(struct session *session)
 	mh_i64ptr_remove(session_registry, &node, NULL);
 	credentials_destroy(&session->credentials);
 	sql_session_stmt_hash_erase(session->sql_stmts);
+	struct session *list_session;
+	rlist_foreach_entry(list_session, &active_sessions, in_active_list) {
+		if (list_session == session) {
+			rlist_del_entry(list_session, in_active_list);
+			break;
+		}
+	}
 	mempool_free(&session_pool, session);
 }
 
