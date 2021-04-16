@@ -1766,14 +1766,20 @@ minmaxStep(sql_context * context, int NotUsed, sql_value ** argv)
 
 	struct func_sql_builtin *func =
 		(struct func_sql_builtin *)context->func;
+	/*
+	 * TODO: Make proper initialization for aggregate accumulation
+	 * structures. Currently a hack is applied here: in case mem pBest is a
+	 * newly created MEM, it bytes are set to 0 using memset(). Since
+	 * MEM_NULL == 0, it works. However, it does not look right.
+	 */
 	pBest = (Mem *) sql_aggregate_context(context, sizeof(*pBest));
 	if (!pBest)
 		return;
 
 	if (mem_is_null(argv[0])) {
-		if (pBest->flags)
+		if (!mem_is_null(pBest))
 			sqlSkipAccumulatorLoad(context);
-	} else if (pBest->flags) {
+	} else if (!mem_is_null(pBest)) {
 		int cmp;
 		struct coll *pColl = sqlGetFuncCollSeq(context);
 		/*
@@ -1801,7 +1807,7 @@ minMaxFinalize(sql_context * context)
 	sql_value *pRes;
 	pRes = (sql_value *) sql_aggregate_context(context, 0);
 	if (pRes) {
-		if (pRes->flags) {
+		if (!mem_is_null(pRes)) {
 			sql_result_value(context, pRes);
 		}
 		mem_destroy(pRes);
