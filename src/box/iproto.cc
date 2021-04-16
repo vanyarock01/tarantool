@@ -1865,8 +1865,6 @@ net_send_msg(struct cmsg *m)
 	if (evio_has_fd(&con->output)) {
 		if (! ev_is_active(&con->output))
 			ev_feed_event(con->loop, &con->output, EV_WRITE);
-	} else if (iproto_connection_is_idle(con)) {
-		iproto_connection_close(con);
 	}
 	iproto_msg_delete(msg);
 }
