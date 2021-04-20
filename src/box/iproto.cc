@@ -1505,9 +1505,27 @@ tx_inject_delay(void)
 	});
 }
 
+static inline void
+tx_start_request(struct cmsg *m)
+{
+	struct iproto_msg *msg = container_of(m, struct iproto_msg, base);
+	struct session *session = msg->connection->session;
+	session->requests_count++;
+}
+
+static inline void
+tx_finish_request(struct cmsg* m)
+{
+	struct iproto_msg *msg = container_of(m, struct iproto_msg, base);
+	struct session *session = msg->connection->session;
+	session->requests_count--;
+	assert(session->requests_count >= 0);
+}
+
 static void
 tx_process1(struct cmsg *m)
 {
+	tx_start_request(m);
 	struct iproto_msg *msg = tx_accept_msg(m);
 	if (tx_check_schema(msg->header.schema_version))
 		goto error;
@@ -1526,14 +1544,17 @@ tx_process1(struct cmsg *m)
 	iproto_reply_select(out, &svp, msg->header.sync, ::schema_version,
 			    tuple != 0);
 	iproto_wpos_create(&msg->wpos, out);
+	tx_finish_request(m);
 	return;
 error:
 	tx_reply_error(msg);
+	tx_finish_request(m);
 }
 
 static void
 tx_process_select(struct cmsg *m)
 {
+	tx_start_request(m);
 	struct iproto_msg *msg = tx_accept_msg(m);
 	struct obuf *out;
 	struct obuf_svp svp;
@@ -1569,9 +1590,11 @@ tx_process_select(struct cmsg *m)
 	iproto_reply_select(out, &svp, msg->header.sync,
 			    ::schema_version, count);
 	iproto_wpos_create(&msg->wpos, out);
+	tx_finish_request(m);
 	return;
 error:
 	tx_reply_error(msg);
+	tx_finish_request(m);
 }
 
 static int
@@ -1588,6 +1611,7 @@ tx_process_call_on_yield(struct trigger *trigger, void *event)
 static void
 tx_process_call(struct cmsg *m)
 {
+	tx_start_request(m);
 	struct iproto_msg *msg = tx_accept_msg(m);
 	if (tx_check_schema(msg->header.schema_version))
 		goto error;
@@ -1659,14 +1683,17 @@ tx_process_call(struct cmsg *m)
 	iproto_reply_select(out, &svp, msg->header.sync,
 			    ::schema_version, count);
 	iproto_wpos_create(&msg->wpos, out);
+	tx_finish_request(m);
 	return;
 error:
+	tx_finish_request(m);
 	tx_reply_error(msg);
 }
 
 static void
 tx_process_misc(struct cmsg *m)
 {
+	tx_start_request(m);
 	struct iproto_msg *msg = tx_accept_msg(m);
 	struct iproto_connection *con = msg->connection;
 	struct obuf *out = con->tx.p_obuf;
@@ -1702,14 +1729,17 @@ tx_process_misc(struct cmsg *m)
 	} catch (Exception *e) {
 		tx_reply_error(msg);
 	}
+	tx_finish_request(m);
 	return;
 error:
 	tx_reply_error(msg);
+	tx_finish_request(m);
 }
 
 static void
 tx_process_sql(struct cmsg *m)
 {
+	tx_start_request(m);
 	struct iproto_msg *msg = tx_accept_msg(m);
 	struct obuf *out;
 	struct port port;
@@ -1782,6 +1812,7 @@ tx_process_sql(struct cmsg *m)
 		if (iproto_reply_ok(out, msg->header.sync, schema_version) != 0)
 			goto error;
 		iproto_wpos_create(&msg->wpos, out);
+		tx_finish_request(m);
 		return;
 	}
 	struct obuf_svp header_svp;
@@ -1798,14 +1829,17 @@ tx_process_sql(struct cmsg *m)
 	port_destroy(&port);
 	iproto_reply_sql(out, &header_svp, msg->header.sync, schema_version);
 	iproto_wpos_create(&msg->wpos, out);
+	tx_finish_request(m);
 	return;
 error:
 	tx_reply_error(msg);
+	tx_finish_request(m);
 }
 
 static void
 tx_process_replication(struct cmsg *m)
 {
+	tx_start_request(m);
 	struct iproto_msg *msg = tx_accept_msg(m);
 	struct iproto_connection *con = msg->connection;
 	struct ev_io io;
@@ -1839,11 +1873,13 @@ tx_process_replication(struct cmsg *m)
 			unreachable();
 		}
 	} catch (SocketError *e) {
+		tx_finish_request(m);
 		return; /* don't write error response to prevent SIGPIPE */
 	} catch (Exception *e) {
 		iproto_write_error(con->input.fd, e, ::schema_version,
 				   msg->header.sync);
 	}
+	tx_finish_request(m);
 }
 
 static void

@@ -139,6 +139,7 @@ session_create(enum session_type type)
 
 	session->id = sid_max();
 	session->graceful_shutdown = false;
+	session->requests_count = 0;
 	memset(&session->meta, 0, sizeof(session->meta));
 	session_set_type(session, type);
 	session->sql_flags = default_flags;
@@ -272,6 +273,7 @@ session_destroy(struct session *session)
 			break;
 		}
 	}
+	assert(session->requests_count == 0);
 	mempool_free(&session_pool, session);
 }
 
