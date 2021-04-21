@@ -36,6 +36,7 @@
 #include <msgpuck.h>
 #include <small/ibuf.h>
 #include <small/obuf.h>
+#include <on_shutdown.h>
 #include "third_party/base64.h"
 
 #include "version.h"
@@ -2249,6 +2250,17 @@ iproto_thread_init(struct iproto_thread *iproto_thread)
 	return 0;
 }
 
+static inline void
+iproto_send_stop_msg(void);
+
+static int
+graceful_shutdown(void *arg)
+{
+	(void) arg;
+	iproto_send_stop_msg();
+	return 0;
+}
+
 /** Initialize the iproto subsystem and start network io thread */
 void
 iproto_init(int threads_count)
@@ -2260,6 +2272,8 @@ iproto_init(int threads_count)
 		/* .sync = */ iproto_session_sync,
 	};
 
+	if (box_on_shutdown(NULL, graceful_shutdown, NULL) != 0)
+		panic("failed to register iproto shutdown function");
 
 	iproto_threads = (struct iproto_thread *)
 		calloc(threads_count, sizeof(struct iproto_thread));
