@@ -37,6 +37,7 @@
 #include <small/ibuf.h>
 #include <small/obuf.h>
 #include "third_party/base64.h"
+#include <on_shutdown.h>
 
 #include "version.h"
 #include "fiber.h"
@@ -139,6 +140,10 @@ struct iproto_thread {
 	 * List of stopped connections
 	 */
 	RLIST_HEAD(stopped_connections);
+	/*
+	 * List of all connections
+	*/
+	RLIST_HEAD(all_connections);
 	/*
 	 * Iproto thread stat
 	 */
@@ -504,6 +509,7 @@ struct iproto_connection
 	 */
 	enum iproto_connection_state state;
 	struct rlist in_stop_list;
+	struct rlist in_all_list;
 	/**
 	 * Kharon is used to implement box.session.push().
 	 * When a new push is ready, tx uses kharon to notify
@@ -715,6 +721,7 @@ iproto_connection_close(struct iproto_connection *con)
 		assert(con->state == IPROTO_CONNECTION_CLOSED);
 	}
 	rlist_del(&con->in_stop_list);
+	rlist_del(&con->in_all_list);
 }
 
 static inline struct ibuf *
@@ -1149,6 +1156,8 @@ iproto_connection_new(struct iproto_thread *iproto_thread, int fd)
 	con->long_poll_count = 0;
 	con->session = NULL;
 	rlist_create(&con->in_stop_list);
+	rlist_create(&con->in_all_list);
+	rlist_add(&con->iproto_thread->all_connections, &con->in_all_list);
 	/* It may be very awkward to allocate at close. */
 	cmsg_init(&con->destroy_msg, con->iproto_thread->destroy_route);
 	cmsg_init(&con->disconnect_msg, con->iproto_thread->disconnect_route);
@@ -2249,6 +2258,28 @@ iproto_thread_init(struct iproto_thread *iproto_thread)
 	return 0;
 }
 
+void
+iproto_process_shutdown(struct iproto_thread* iproto_thread) {
+	struct iproto_connection *con;
+	rlist_foreach_entry(con, &iproto_thread->all_connections, in_all_list) {
+		shutdown(con->input.fd, SHUT_RD);
+	}
+}
+
+static inline void
+iproto_send_stop_msg(void);
+
+static inline void
+iproto_send_shutdown_msg(void);
+
+static int
+graceful_shutdown(void *arg)
+{
+	(void) arg;
+	iproto_send_shutdown_msg();
+	return 0;
+}
+
 /** Initialize the iproto subsystem and start network io thread */
 void
 iproto_init(int threads_count)
@@ -2260,6 +2291,8 @@ iproto_init(int threads_count)
 		/* .sync = */ iproto_session_sync,
 	};
 
+	if (box_on_shutdown(NULL, graceful_shutdown, NULL) != 0)
+		panic("failed to register iproto shutdown function");
 
 	iproto_threads = (struct iproto_thread *)
 		calloc(threads_count, sizeof(struct iproto_thread));
@@ -2321,6 +2354,11 @@ enum iproto_cfg_op {
 	 * Command code do get statistic from iproto thread
 	 */
 	IPROTO_CFG_STAT,
+	/**
+	* Command code to process shutdown in all connections from
+	* iproto thread
+	*/
+	IPROTO_CFG_SHUTDOWN,
 };
 
 /**
@@ -2414,6 +2452,9 @@ iproto_do_cfg_f(struct cbus_call_msg *m)
 		case IPROTO_CFG_STAT:
 			iproto_fill_stat(iproto_thread, cfg_msg);
 			break;
+		case IPROTO_CFG_SHUTDOWN:
+			iproto_process_shutdown(iproto_thread);
+			break;
 		default:
 			unreachable();
 		}
@@ -2431,6 +2472,15 @@ iproto_do_cfg(struct iproto_thread *iproto_thread, struct iproto_cfg_msg *msg)
 	if (cbus_call(&iproto_thread->net_pipe, &iproto_thread->tx_pipe, msg,
 		      iproto_do_cfg_f, NULL, TIMEOUT_INFINITY) != 0)
 		diag_raise();
+}
+
+static inline void
+iproto_send_shutdown_msg(void)
+{
+	struct iproto_cfg_msg cfg_msg;
+	iproto_cfg_msg_create(&cfg_msg, IPROTO_CFG_SHUTDOWN);
+	for (int i = 0; i < iproto_threads_count; i++)
+		iproto_do_cfg(&iproto_threads[i], &cfg_msg);
 }
 
 static inline void
