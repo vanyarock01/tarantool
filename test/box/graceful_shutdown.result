@@ -1,0 +1,153 @@
+-- test-run result file version 2
+net_box = require('net.box')
+ | ---
+ | ...
+fiber = require('fiber')
+ | ---
+ | ...
+env = require('test_run')
+ | ---
+ | ...
+test_run = env.new()
+ | ---
+ | ...
+
+--guest can have some of these privileges
+_, _ = pcall(function() box.schema.user.grant('guest','execute,write,read','universe') end)
+ | ---
+ | ...
+
+test_run:cmd("create server test with script='replication/replica_timeout.lua'")
+ | ---
+ | - true
+ | ...
+test_run:cmd("start server test")
+ | ---
+ | - true
+ | ...
+
+_ = box.schema.space.create('counter')
+ | ---
+ | ...
+_ = box.space.counter:create_index('primary')
+ | ---
+ | ...
+
+test_run:cmd("switch test")
+ | ---
+ | - true
+ | ...
+_, _ = pcall(function() box.schema.user.grant('guest','execute,write,read','universe') end)
+ | ---
+ | ...
+net_box = require('net.box')
+ | ---
+ | ...
+fiber = require('fiber')
+ | ---
+ | ...
+test_run:cmd("set variable default_uri to 'default.listen'")
+ | ---
+ | - true
+ | ...
+def_con = net_box.connect(default_uri)
+ | ---
+ | ...
+function check(t) fiber.sleep(t) def_con:call('box.space.counter:auto_increment', {{'sleep ' .. tostring(t)}}) end
+ | ---
+ | ...
+function exit() require('fiber').new(function() os.exit() end) return 'exit scheduled' end
+ | ---
+ | ...
+
+test_run:cmd("switch default")
+ | ---
+ | - true
+ | ...
+test_run:cmd("set variable test_uri to 'test.listen'")
+ | ---
+ | - true
+ | ...
+test_con = net_box.connect(test_uri)
+ | ---
+ | ...
+graceful_con = net_box.connect(test_uri)
+ | ---
+ | ...
+graceful_con.space._session_settings:update('graceful_shutdown', {{'=', 'value', true}})
+ | ---
+ | - ['graceful_shutdown', true]
+ | ...
+graceful_con.space._session_settings:select{}
+ | ---
+ | - - ['error_marshaling_enabled', false]
+ |   - ['graceful_shutdown', true]
+ |   - ['sql_default_engine', 'memtx']
+ |   - ['sql_defer_foreign_keys', false]
+ |   - ['sql_full_column_names', false]
+ |   - ['sql_full_metadata', false]
+ |   - ['sql_parser_debug', false]
+ |   - ['sql_recursive_triggers', true]
+ |   - ['sql_reverse_unordered_selects', false]
+ |   - ['sql_select_debug', false]
+ |   - ['sql_vdbe_debug', false]
+ | ...
+graceful_con:set_shutdown_handler(function() box.space.counter:auto_increment{'shutdown receive'} end)
+ | ---
+ | ...
+for time = 0, 10, 2 do test_con:call('check', {time}, {is_async=true}) end
+ | ---
+ | ...
+
+-- Default on_shutdown triggers timeout == 3, but we sets it
+-- here directly to make test clear
+box.ctl.set_on_shutdown_timeout(3)
+ | ---
+ | ...
+status, error = pcall(function() test_con:call('exit') end)
+ | ---
+ | ...
+fiber.sleep(1)
+ | ---
+ | ...
+
+net_box.connect(test_uri).state
+ | ---
+ | - error
+ | ...
+test_con:ping()
+ | ---
+ | - false
+ | ...
+graceful_con:ping()
+ | ---
+ | - true
+ | ...
+_ = graceful_con:shutdown()
+ | ---
+ | ...
+graceful_con:ping()
+ | ---
+ | - false
+ | ...
+
+fiber.sleep(4)
+ | ---
+ | ...
+box.space.counter:select()
+ | ---
+ | - - [1, 'sleep 0']
+ |   - [2, 'shutdown receive']
+ |   - [3, 'sleep 2']
+ | ...
+
+box.space.counter:drop()
+ | ---
+ | ...
+test_run:cmd("delete server test")
+ | ---
+ | - true
+ | ...
+box.schema.user.revoke('guest','execute,write,read','universe')
+ | ---
+ | ...
