@@ -1790,6 +1790,8 @@ field_hint_scalar(const char *field, struct coll *coll)
 			decimal_t dec;
 			return hint_decimal(decimal_unpack(&field, len, &dec));
 		}
+		case MP_UUID:
+			return hint_uuid_raw(field);
 		default:
 			unreachable();
 		}

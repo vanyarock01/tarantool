@@ -1429,10 +1429,8 @@ fail_format_change(12, 'number')
   number, got extension'
 ...
 -- uuid --X--> scalar
-fail_format_change(12, 'scalar')
+ok_format_change(12, 'scalar')
 ---
-- 'Tuple field 12 (field12) type does not match one required by operation: expected
-  scalar, got extension'
 ...
 -- uuid --X--> string
 fail_format_change(12, 'string')
