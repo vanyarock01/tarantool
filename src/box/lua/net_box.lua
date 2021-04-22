@@ -43,6 +43,7 @@ local IPROTO_ERROR         = 0x52
 local IPROTO_GREETING_SIZE = 128
 local IPROTO_CHUNK_KEY     = 128
 local IPROTO_OK_KEY        = 0
+local IPROTO_SHUTDOWN_KEY  = 63
 
 -- select errors from box.error
 local E_UNKNOWN              = box.error.UNKNOWN
@@ -99,6 +100,7 @@ end
 
 local method_encoder = {
     ping    = internal.encode_ping,
+    shutdown = internal.encode_shutdown,
     call_16 = internal.encode_call_16,
     call_17 = internal.encode_call,
     eval    = internal.encode_eval,
@@ -125,6 +127,7 @@ local method_encoder = {
 
 local method_decoder = {
     ping    = decode_nil,
+    shutdown = decode_nil,
     call_16 = internal.decode_select,
     call_17 = decode_data,
     eval    = decode_data,
@@ -206,6 +209,7 @@ end
 -- ignore.
 --
 local function on_push_sync_default() end
+local function shutdown_handler() end
 
 --
 -- Basically, *transport* is a TCP connection speaking one of
@@ -581,12 +585,16 @@ local function create_transport(host, port, user, password, callback,
     end
 
     local function dispatch_response_iproto(hdr, body_rpos, body_end)
+        local status = hdr[IPROTO_STATUS_KEY]
+        if status == IPROTO_SHUTDOWN_KEY then
+            shutdown_handler()
+            return
+        end
         local id = hdr[IPROTO_SYNC_KEY]
         local request = requests[id]
         if request == nil then -- nobody is waiting for the response
             return
         end
-        local status = hdr[IPROTO_STATUS_KEY]
         local body
         local body_len = body_end - body_rpos
 
@@ -1216,6 +1224,15 @@ function remote_methods:ping(opts)
     return (pcall(self._request, self, 'ping', opts))
 end
 
+function remote_methods:shutdown(opts)
+    check_remote_arg(self, 'shutdown')
+    self._request(self, 'shutdown', opts)
+end
+
+function remote_methods:set_shutdown_handler(handler)
+    shutdown_handler = handler
+end
+
 function remote_methods:reload_schema()
     check_remote_arg(self, 'reload_schema')
     self:ping()
@@ -1630,6 +1647,8 @@ end
 
 this_module.self = {
     ping = function() return true end,
+    shutdown = function() return end,
+    set_shutdown_handler = function() end,
     reload_schema = function() end,
     close = function() end,
     timeout = function(self) return self end,
