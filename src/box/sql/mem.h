@@ -30,6 +30,7 @@
  * SUCH DAMAGE.
  */
 #include "box/field_def.h"
+#include "uuid/tt_uuid.h"
 
 struct sql;
 struct Vdbe;
@@ -38,6 +39,7 @@ struct mpstream;
 struct VdbeFrame;
 
 enum mem_type {
+	/* Standard (MP_*) types. */
 	MEM_NULL = 0,
 	MEM_UINT,
 	MEM_INT,
@@ -48,6 +50,9 @@ enum mem_type {
 	MEM_BOOL,
 	MEM_FLOAT,
 	MEM_DOUBLE,
+	/* Extension (MP_EXT) types. */
+	MEM_UUID,
+	/* Internal SQL types. */
 	MEM_INVALID,
 	MEM_FRAME,
 	MEM_PTR,
@@ -73,6 +78,7 @@ struct Mem {
 		 */
 		struct func *func;
 		struct VdbeFrame *pFrame;	/* Used when flags==MEM_Frame */
+		struct tt_uuid uuid;
 	} u;
 	enum mem_type type;
 	u32 flags;		/* Some combination of MEM_Term, MEM_Zero, MEM_Dyn, etc. */
@@ -291,6 +297,10 @@ mem_set_bool(struct Mem *mem, bool value);
 /** Clear MEM and set it to DOUBLE. */
 void
 mem_set_double(struct Mem *mem, double value);
+
+/** Clear MEM and set it to UUID. */
+void
+mem_set_uuid(struct Mem *mem, struct tt_uuid *uuid);
 
 /** Clear MEM and set it to STRING. The string belongs to another object. */
 void

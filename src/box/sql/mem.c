@@ -59,7 +59,8 @@ enum {
 const char *
 mem_str(const struct Mem *mem)
 {
-	char buf[BUF_SIZE];
+	assert((int)UUID_STR_LEN > (int)BUF_SIZE);
+	char buf[UUID_STR_LEN + 1];
 	switch (mem->type) {
 	case MEM_NULL:
 		return "NULL";
@@ -76,6 +77,9 @@ mem_str(const struct Mem *mem)
 		return tt_sprintf("%s", buf);
 	case MEM_BIN:
 		return "varbinary";
+	case MEM_UUID:
+		tt_uuid_to_string(&mem->u.uuid, &buf[0]);
+		return tt_sprintf("%s", buf);
 	case MEM_MAP:
 	case MEM_ARRAY:
 		return mp_str(mem->z);
@@ -182,6 +186,16 @@ mem_set_double(struct Mem *mem, double value)
 		return;
 	mem->u.r = value;
 	mem->type = MEM_DOUBLE;
+	mem->flags = 0;
+}
+
+void
+mem_set_uuid(struct Mem *mem, struct tt_uuid *uuid)
+{
+	mem_clear(mem);
+	mem->field_type = FIELD_TYPE_UUID;
+	mem->u.uuid = *uuid;
+	mem->type = MEM_UUID;
 	mem->flags = 0;
 }
 
@@ -1033,6 +1047,10 @@ mem_cast_implicit(struct Mem *mem, enum field_type field_type)
 		if (type == MEM_MAP || type == MEM_ARRAY)
 			return -1;
 		return 0;
+	case FIELD_TYPE_UUID:
+		if (type == MEM_UUID)
+			return 0;
+		return -1;
 	case FIELD_TYPE_ANY:
 		return 0;
 	default:
@@ -1106,6 +1124,10 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type field_type)
 		if (type == MEM_MAP || type == MEM_ARRAY)
 			return -1;
 		return 0;
+	case FIELD_TYPE_UUID:
+		if (type == MEM_UUID)
+			return 0;
+		return -1;
 	default:
 		break;
 	}
@@ -1963,7 +1985,9 @@ enum mp_type
 mem_mp_type(struct Mem *mem)
 {
 	assert(mem->type < MEM_INVALID);
-	return (enum mp_type)mem->type;
+	if (mem->type < MEM_UUID)
+		return (enum mp_type)mem->type;
+	return MP_EXT;
 }
 
 /* EVIDENCE-OF: R-12793-43283 Every value in sql has one of five
@@ -2604,6 +2628,17 @@ mem_from_mp_ephemeral(struct Mem *mem, const char *buf, uint32_t *len)
 		break;
 	}
 	case MP_EXT: {
+		int8_t type;
+		const char **data = &buf;
+		uint32_t len = mp_decode_extl(data, &type);
+		if (type == MP_UUID) {
+			assert(sizeof(struct tt_uuid) == len);
+			memcpy(&mem->u.uuid, *data, len);
+			mem->type = MEM_UUID;
+			mem->flags = 0;
+			mem->field_type = FIELD_TYPE_UUID;
+			break;
+		}
 		mem->z = (char *)buf;
 		mp_next(&buf);
 		mem->n = buf - mem->z;
@@ -2722,6 +2757,9 @@ mpstream_encode_vdbe_mem(struct mpstream *stream, struct Mem *var)
 		return;
 	case MEM_UINT:
 		mpstream_encode_uint(stream, var->u.u);
+		return;
+	case MEM_UUID:
+		mpstream_encode_uuid(stream, &var->u.uuid);
 		return;
 	case MEM_DOUBLE:
 		mpstream_encode_double(stream, var->u.r);
