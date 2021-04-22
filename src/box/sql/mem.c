@@ -661,6 +661,19 @@ bin_to_str0(struct Mem *mem)
 }
 
 static inline int
+bin_to_uuid(struct Mem *mem)
+{
+	assert(mem->type == MEM_BIN);
+	if (mem->n != UUID_LEN || tt_uuid_validate((struct tt_uuid *)mem->z) != 0)
+		return -1;
+	mem->u.uuid = *(struct tt_uuid *)mem->z;
+	mem->type = MEM_UUID;
+	mem->flags = 0;
+	mem->field_type = FIELD_TYPE_UUID;
+	return 0;
+}
+
+static inline int
 bytes_to_int(struct Mem *mem)
 {
 	assert(mem->type == MEM_STR || mem->type == MEM_BIN);
@@ -840,6 +853,13 @@ uuid_to_str0(struct Mem *mem)
 	return mem_copy_str0(mem, &buf[0]);
 }
 
+static inline int
+uuid_to_bin(struct Mem *mem)
+{
+	assert(mem->type == MEM_UUID);
+	return mem_copy_bin(mem, (char *)&mem->u.uuid, UUID_LEN);
+}
+
 int
 mem_to_int(struct Mem *mem)
 {
@@ -1005,6 +1025,8 @@ mem_cast_explicit(struct Mem *mem, enum field_type field_type)
 			return 0;
 		if (type == MEM_STR)
 			return str_to_bin(mem);
+		if (type == MEM_UUID)
+			return uuid_to_bin(mem);
 		return -1;
 	case FIELD_TYPE_NUMBER:
 		return mem_to_number(mem);
@@ -1013,6 +1035,8 @@ mem_cast_explicit(struct Mem *mem, enum field_type field_type)
 			return 0;
 		if (type == MEM_STR)
 			return str_to_uuid(mem);
+		if (type == MEM_BIN)
+			return bin_to_uuid(mem);
 		return -1;
 	case FIELD_TYPE_SCALAR:
 		if (type == MEM_MAP || type == MEM_ARRAY)
@@ -1062,6 +1086,8 @@ mem_cast_implicit(struct Mem *mem, enum field_type field_type)
 	case FIELD_TYPE_VARBINARY:
 		if (type == MEM_BIN || type == MEM_MAP || type == MEM_ARRAY)
 			return 0;
+		if (type == MEM_UUID)
+			return uuid_to_bin(mem);
 		return -1;
 	case FIELD_TYPE_NUMBER:
 		if (type == MEM_INT || type == MEM_UINT || type == MEM_DOUBLE)
@@ -1084,6 +1110,8 @@ mem_cast_implicit(struct Mem *mem, enum field_type field_type)
 			return 0;
 		if (type == MEM_STR)
 			return str_to_uuid(mem);
+		if (type == MEM_BIN)
+			return bin_to_uuid(mem);
 		return -1;
 	case FIELD_TYPE_ANY:
 		return 0;
@@ -1139,6 +1167,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type field_type)
 	case FIELD_TYPE_VARBINARY:
 		if (type == MEM_BIN)
 			return 0;
+		if (type == MEM_UUID)
+			return uuid_to_bin(mem);
 		return -1;
 	case FIELD_TYPE_NUMBER:
 		if (type == MEM_INT || type == MEM_UINT || type == MEM_DOUBLE)
@@ -1163,6 +1193,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type field_type)
 			return 0;
 		if (type == MEM_STR)
 			return str_to_uuid(mem);
+		if (type == MEM_BIN)
+			return bin_to_uuid(mem);
 		return -1;
 	default:
 		break;
@@ -1299,11 +1331,19 @@ mem_len(const struct Mem *mem, uint32_t *len)
 int
 mem_get_uuid(const struct Mem *mem, struct tt_uuid *uuid)
 {
-	if (mem->type != MEM_UUID && mem->type != MEM_STR)
+	if (mem->type != MEM_UUID && mem->type != MEM_STR &&
+	    mem->type != MEM_BIN)
 		return -1;
 	if (mem->type == MEM_STR)
 		return tt_uuid_from_string(tt_cstr(mem->z, mem->n), uuid);
-	*uuid = mem->u.uuid;
+	if (mem->type == MEM_UUID) {
+		*uuid = mem->u.uuid;
+		return 0;
+	}
+	if (mem->n != UUID_LEN ||
+	    tt_uuid_validate((struct tt_uuid *)mem->z) != 0)
+		return -1;
+	*uuid = *(struct tt_uuid *)mem->z;
 	return 0;
 }
 
