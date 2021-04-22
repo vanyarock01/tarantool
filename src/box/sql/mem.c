@@ -39,6 +39,7 @@
 #include "box/port.h"
 #include "lua/utils.h"
 #include "lua/msgpack.h"
+#include "uuid/mp_uuid.h"
 
 /*
  * Make sure pMem->z points to a writable allocation of at least
@@ -593,6 +594,18 @@ str_to_bin(struct Mem *mem)
 }
 
 static inline int
+str_to_uuid(struct Mem *mem)
+{
+	assert(mem->type == MEM_STR);
+	if (tt_uuid_from_string(tt_cstr(mem->z, mem->n), &mem->u.uuid) != 0)
+		return -1;
+	mem->type = MEM_UUID;
+	mem->flags = 0;
+	mem->field_type = FIELD_TYPE_UUID;
+	return 0;
+}
+
+static inline int
 str_to_bool(struct Mem *mem)
 {
 	assert(mem->type == MEM_STR);
@@ -818,6 +831,15 @@ map_to_str0(struct Mem *mem)
 	return mem_copy_str0(mem, str);
 }
 
+static inline int
+uuid_to_str0(struct Mem *mem)
+{
+	assert(mem->type == MEM_UUID);
+	char buf[UUID_STR_LEN + 1];
+	tt_uuid_to_string(&mem->u.uuid, &buf[0]);
+	return mem_copy_str0(mem, &buf[0]);
+}
+
 int
 mem_to_int(struct Mem *mem)
 {
@@ -901,6 +923,8 @@ mem_to_str0(struct Mem *mem)
 		return array_to_str0(mem);
 	case MEM_BOOL:
 		return bool_to_str0(mem);
+	case MEM_UUID:
+		return uuid_to_str0(mem);
 	default:
 		return -1;
 	}
@@ -926,6 +950,8 @@ mem_to_str(struct Mem *mem)
 		return array_to_str0(mem);
 	case MEM_BOOL:
 		return bool_to_str0(mem);
+	case MEM_UUID:
+		return uuid_to_str0(mem);
 	default:
 		return -1;
 	}
@@ -982,6 +1008,12 @@ mem_cast_explicit(struct Mem *mem, enum field_type field_type)
 		return -1;
 	case FIELD_TYPE_NUMBER:
 		return mem_to_number(mem);
+	case FIELD_TYPE_UUID:
+		if (type == MEM_UUID)
+			return 0;
+		if (type == MEM_STR)
+			return str_to_uuid(mem);
+		return -1;
 	case FIELD_TYPE_SCALAR:
 		if (type == MEM_MAP || type == MEM_ARRAY)
 			return -1;
@@ -1050,6 +1082,8 @@ mem_cast_implicit(struct Mem *mem, enum field_type field_type)
 	case FIELD_TYPE_UUID:
 		if (type == MEM_UUID)
 			return 0;
+		if (type == MEM_STR)
+			return str_to_uuid(mem);
 		return -1;
 	case FIELD_TYPE_ANY:
 		return 0;
@@ -1127,6 +1161,8 @@ mem_cast_implicit_old(struct Mem *mem, enum field_type field_type)
 	case FIELD_TYPE_UUID:
 		if (type == MEM_UUID)
 			return 0;
+		if (type == MEM_STR)
+			return str_to_uuid(mem);
 		return -1;
 	default:
 		break;
@@ -1257,6 +1293,17 @@ mem_len(const struct Mem *mem, uint32_t *len)
 		*len = mem->n + mem->u.nZero;
 	else
 		*len = mem->n;
+	return 0;
+}
+
+int
+mem_get_uuid(const struct Mem *mem, struct tt_uuid *uuid)
+{
+	if (mem->type != MEM_UUID && mem->type != MEM_STR)
+		return -1;
+	if (mem->type == MEM_STR)
+		return tt_uuid_from_string(tt_cstr(mem->z, mem->n), uuid);
+	*uuid = mem->u.uuid;
 	return 0;
 }
 
@@ -2629,19 +2676,22 @@ mem_from_mp_ephemeral(struct Mem *mem, const char *buf, uint32_t *len)
 	}
 	case MP_EXT: {
 		int8_t type;
-		const char **data = &buf;
-		uint32_t len = mp_decode_extl(data, &type);
+		const char *svp = buf;
+		uint32_t len = mp_decode_extl(&buf, &type);
+		(void)len;
 		if (type == MP_UUID) {
-			assert(sizeof(struct tt_uuid) == len);
-			memcpy(&mem->u.uuid, *data, len);
+			assert(len == UUID_LEN);
+			buf = svp;
+			if (mp_decode_uuid(&buf, &mem->u.uuid) == NULL)
+				return -1;
 			mem->type = MEM_UUID;
 			mem->flags = 0;
 			mem->field_type = FIELD_TYPE_UUID;
 			break;
 		}
-		mem->z = (char *)buf;
-		mp_next(&buf);
-		mem->n = buf - mem->z;
+		mem->z = (char *)svp;
+		mp_next(&svp);
+		mem->n = svp - mem->z;
 		mem->type = MEM_BIN;
 		mem->flags = MEM_Ephem;
 		mem->field_type = FIELD_TYPE_VARBINARY;

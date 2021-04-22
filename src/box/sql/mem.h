@@ -877,6 +877,14 @@ int
 mem_len(const struct Mem *mem, uint32_t *len);
 
 /**
+ * Return value for MEM of UUID type. For MEM of all other types convert value
+ * of the MEM to UUID if possible and return converted value. Original MEM is
+ * not changed.
+ */
+int
+mem_get_uuid(const struct Mem *mem, struct tt_uuid *uuid);
+
+/**
  * Return length of value for MEM of STRING or VARBINARY type. This function is
  * not safe since there is no proper processing in case mem_len() return an
  * error. In this case this function returns 0.
