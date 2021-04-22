@@ -83,6 +83,10 @@
 #include "raft.h"
 #include "trivia/util.h"
 
+enum {
+	IPROTO_THREADS_MAX = 1000,
+};
+
 static char status[64] = "unknown";
 
 /** box.stat rmean */
@@ -1111,6 +1115,18 @@ box_check_small_alloc_options(void)
 			  " to 1024 * 16 and exponent of two");
 }
 
+static void
+box_check_iproto_options(void)
+{
+	int iproto_threads = cfg_geti("iproto_threads");
+	if (iproto_threads <= 0 || iproto_threads > IPROTO_THREADS_MAX) {
+		tnt_raise(ClientError, ER_CFG, "iproto_threads",
+			  tt_sprintf("must be greater than or equal to 0,"
+				     " less than or equal to %d",
+				     IPROTO_THREADS_MAX));
+	}
+}
+
 void
 box_check_config(void)
 {
@@ -1146,6 +1162,7 @@ box_check_config(void)
 	box_check_memtx_min_tuple_size(cfg_geti64("memtx_min_tuple_size"));
 	box_check_small_alloc_options();
 	box_check_vinyl_options();
+	box_check_iproto_options();
 	if (box_check_sql_cache_size(cfg_geti("sql_cache_size")) != 0)
 		diag_raise();
 }
