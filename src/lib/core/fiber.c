@@ -396,10 +396,11 @@ fiber_call_impl(struct fiber *callee)
 	assert(rlist_empty(&callee->state));
 	assert(caller);
 	assert(caller != callee);
-
+	assert((caller->flags & FIBER_IS_RUNNING) != 0);
+	assert((callee->flags & FIBER_IS_RUNNING) == 0);
+	caller->flags &= ~FIBER_IS_RUNNING;
+	callee->flags = (callee->flags & ~FIBER_IS_READY) | FIBER_IS_RUNNING;
 	cord->fiber = callee;
-
-	callee->flags &= ~FIBER_IS_READY;
 	ASAN_START_SWITCH_FIBER(asan_state, 1,
 				callee->stack,
 				callee->stack_size);
@@ -452,8 +453,8 @@ fiber_checkstack(void)
  * call, it simply reschedules the fiber after other ready
  * fibers in the same event loop iteration.
  */
-void
-fiber_wakeup(struct fiber *f)
+static void
+fiber_wakeup_if_not(struct fiber *f, int not_flags)
 {
 	assert(! (f->flags & FIBER_IS_DEAD));
 	/**
@@ -477,7 +478,7 @@ fiber_wakeup(struct fiber *f)
 	 * external rock can mess things up. Ignore such attempts
 	 * as well.
 	 */
-	if (f->flags & (FIBER_IS_READY | FIBER_IS_DEAD))
+	if ((f->flags & not_flags) != 0)
 		return;
 	struct cord *cord = cord();
 	if (rlist_empty(&cord->ready)) {
@@ -501,6 +502,19 @@ fiber_wakeup(struct fiber *f)
 	 */
 	rlist_move_tail_entry(&cord->ready, f, state);
 	f->flags |= FIBER_IS_READY;
+}
+
+void
+fiber_wake(struct fiber *f)
+{
+	fiber_wakeup_if_not(f, FIBER_IS_READY | FIBER_IS_DEAD |
+			    FIBER_IS_RUNNING);
+}
+
+void
+fiber_wakeup(struct fiber *f)
+{
+	fiber_wakeup_if_not(f, FIBER_IS_READY | FIBER_IS_DEAD);
 }
 
 /** Cancel the subject fiber.
@@ -602,7 +616,11 @@ fiber_clock64(void)
 void
 fiber_reschedule(void)
 {
-	fiber_wakeup(fiber());
+	struct fiber *f = fiber();
+	assert((f->flags & FIBER_IS_RUNNING) != 0);
+	f->flags &= ~FIBER_IS_RUNNING;
+	fiber_wakeup(f);
+	f->flags |= FIBER_IS_RUNNING;
 	fiber_yield();
 }
 
@@ -686,8 +704,11 @@ fiber_yield(void)
 
 	assert(callee->flags & FIBER_IS_READY || callee == &cord->sched);
 	assert(! (callee->flags & FIBER_IS_DEAD));
+	assert((caller->flags & FIBER_IS_RUNNING) != 0);
+	assert((callee->flags & FIBER_IS_RUNNING) == 0);
+	caller->flags &= ~FIBER_IS_RUNNING;
+	callee->flags = (callee->flags & ~FIBER_IS_READY) | FIBER_IS_RUNNING;
 	cord->fiber = callee;
-	callee->flags &= ~FIBER_IS_READY;
 	ASAN_START_SWITCH_FIBER(asan_state,
 				(caller->flags & FIBER_IS_DEAD) == 0,
 				callee->stack,
@@ -901,9 +922,10 @@ fiber_loop(MAYBE_UNUSED void *data)
 	ASAN_FINISH_SWITCH_FIBER(NULL);
 	for (;;) {
 		struct fiber *fiber = fiber();
-
+		assert((fiber->flags & FIBER_IS_RUNNING) != 0);
 		assert(fiber != NULL && fiber->f != NULL && fiber->fid != 0);
 		fiber->f_ret = fiber_invoke(fiber->f, fiber->f_data);
+		assert((fiber->flags & FIBER_IS_RUNNING) != 0);
 		if (fiber->f_ret != 0) {
 			struct error *e = diag_last_error(&fiber->diag);
 			/* diag must not be empty on error */
@@ -935,8 +957,10 @@ fiber_loop(MAYBE_UNUSED void *data)
 		fiber_on_stop(fiber);
 		/* reset pending wakeups */
 		rlist_del(&fiber->state);
-		if (! (fiber->flags & FIBER_IS_JOINABLE))
+		if (! (fiber->flags & FIBER_IS_JOINABLE)) {
 			fiber_recycle(fiber);
+			fiber->flags |= FIBER_IS_RUNNING;
+		}
 		/*
 		 * Crash if spurious wakeup happens, don't call the old
 		 * function again, ap is garbage by now.
@@ -1449,6 +1473,7 @@ cord_create(struct cord *cord, const char *name)
 	cord->sched.name = NULL;
 	fiber_set_name(&cord->sched, "sched");
 	cord->fiber = &cord->sched;
+	cord->sched.flags |= FIBER_IS_RUNNING;
 
 	cord->max_fid = FIBER_ID_MAX_RESERVED;
 	/*

@@ -158,10 +158,11 @@ enum {
 	 * the fiber is recycled.
 	 */
 	FIBER_IS_DEAD		= 1 << 4,
+	FIBER_IS_RUNNING = 1 << 6,
 	/**
 	 * This flag is set when fiber uses custom stack size.
 	 */
-	FIBER_CUSTOM_STACK	= 1 << 5,
+	FIBER_CUSTOM_STACK	= 1 << 7,
 	FIBER_DEFAULT_FLAGS = FIBER_IS_CANCELLABLE
 };
 
@@ -819,6 +820,9 @@ fiber_destroy_all(struct cord *cord);
 
 void
 fiber_gc(void);
+
+void
+fiber_wake(struct fiber *f);
 
 void
 fiber_call(struct fiber *callee);
