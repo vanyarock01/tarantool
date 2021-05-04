@@ -4,6 +4,8 @@
 // #include <small/...> TODO: use custom allocator
 // The simplest possible list for storing pointers to tarantool tuples
 
+#include <string.h>
+
 typedef void* data_ptr;
 typedef struct inverted_list t_inverted_list;
 
@@ -41,6 +43,26 @@ inverted_list_insert(t_inverted_list *lst, data_ptr tuple)
 
     lst->tuple_vector[lst->len] = tuple;
     lst->len++;
+}
+
+int
+inverted_list_compare(t_inverted_list *lst_a, t_inverted_list *lst_b)
+{
+    if (lst_a->len < lst_b->len) {
+        return -1;
+    } else if (lst_a->len > lst_b->len) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+int inverted_list_is_equal(t_inverted_list *lst_a, t_inverted_list *lst_b)
+{
+    if (lst_a->len != lst_b->len) {
+        return 0;
+    }
+    return memcmp(lst_a->tuple_vector, lst_b->tuple_vector, lst_a->len) == 0;
 }
 
 #endif
