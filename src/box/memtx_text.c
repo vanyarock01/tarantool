@@ -3,7 +3,7 @@
 #include "space.h"
 #include "schema.h"
 #include "tuple.h"
-#include <salad/inverted_list.h>
+#include <salad/inverted_index.h>
 
 struct memtx_text_data {
     t_inverted_list *inverted_position;
