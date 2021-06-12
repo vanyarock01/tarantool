@@ -72,45 +72,58 @@ typedef struct inverted_tree_elem {
 
 #include "bps_tree.h"
 
+#undef BPS_TREE_NAME
+#undef BPS_TREE_BLOCK_SIZE
+#undef BPS_TREE_EXTENT_SIZE
+#undef BPS_TREE_COMPARE
+#undef BPS_TREE_COMPARE_KEY
+#undef BPS_TREE_IS_IDENTICAL
+
+#undef bps_tree_arg_t
+#undef bps_tree_key_t
+#undef bps_tree_elem_t
+
 // toy allocators with context for local tests
-int extents_count = 0;
-
-static void *
-extent_alloc(void *ctx)
-{
-    int *p_extents_count = (int *)ctx;
-    assert(p_extents_count == &extents_count);
-    ++*p_extents_count;
-    return malloc(BPS_TREE_EXTENT_SIZE);
-}
-
-static void
-extent_free(void *ctx, void *extent)
-{
-    int *p_extents_count = (int *)ctx;
-    assert(p_extents_count == &extents_count);
-    --*p_extents_count;
-    free(extent);
-}
+//int extents_count = 0;
+//
+//static void *
+//extent_alloc(void *ctx)
+//{
+//    int *p_extents_count = (int *)ctx;
+//    assert(p_extents_count == &extents_count);
+//    ++*p_extents_count;
+//    return malloc(BPS_TREE_EXTENT_SIZE);
+//}
+//
+//static void
+//extent_free(void *ctx, void *extent)
+//{
+//    int *p_extents_count = (int *)ctx;
+//    assert(p_extents_count == &extents_count);
+//    --*p_extents_count;
+//    free(extent);
+//}
 
 typedef struct inverted_index {
-    inverted_index_tree *tree;
+    struct inverted_index_tree *tree;
 } inverted_index_t;
 
 inverted_index_t *
-inverted_index_create()
+inverted_index_create(bps_tree_extent_alloc_f extent_alloc_func,
+                      bps_tree_extent_free_f extent_free_func,
+                      void *alloc_ctx)
 {
     inverted_index_t *idx = (inverted_index_t *) malloc(sizeof(inverted_index_t));
-    idx->tree = (inverted_index_tree *) malloc(sizeof(inverted_index_tree));
+    idx->tree = (struct inverted_index_tree *) malloc(sizeof(idx->tree));
 
-    inverted_index_tree_create(idx->tree, 0, extent_alloc, extent_free, &extents_count);
+    inverted_index_tree_create(idx->tree, 0, extent_alloc_func, extent_free_func, alloc_ctx);
     return idx;
 }
 
 void
 inverted_index_destroy(inverted_index_t *idx)
 {
-    inverted_index_tree_iterator it = inverted_index_tree_iterator_first(idx->tree);
+    struct inverted_index_tree_iterator it = inverted_index_tree_iterator_first(idx->tree);
     for (int i = 0; i < inverted_index_tree_size(idx->tree); i++) {
         tree_elem_t *elem = inverted_index_tree_iterator_get_elem(idx->tree, &it);
         tuple_list_destroy(elem->lst);
@@ -119,6 +132,12 @@ inverted_index_destroy(inverted_index_t *idx)
     inverted_index_tree_destroy(idx->tree);
     free(idx->tree);
     free(idx);
+}
+
+size_t
+inverted_index_size(inverted_index_t *idx)
+{
+    return inverted_index_tree_size(idx->tree);
 }
 
 int
