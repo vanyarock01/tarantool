@@ -66,53 +66,66 @@ BuildUnsupportedIndexFeature(const char *file, unsigned line,
 
 int
 key_validate(const struct index_def *index_def, enum iterator_type type,
-	     const char *key, uint32_t part_count)
-{
-	assert(key != NULL || part_count == 0);
-	if (part_count == 0) {
-		/*
-		 * Zero key parts are allowed:
-		 * - for TREE index, all iterator types,
-		 * - ITER_ALL iterator type, all index types
-		 * - ITER_GT iterator in HASH index (legacy)
-		 */
-		if (index_def->type == TREE || type == ITER_ALL ||
-		    (index_def->type == HASH && type == ITER_GT))
-			return 0;
-		/* Fall through. */
-	}
+	     const char *key, uint32_t part_count) {
+    assert(key != NULL || part_count == 0);
+    if (part_count == 0) {
+        /*
+         * Zero key parts are allowed:
+         * - for TREE index, all iterator types,
+         * - ITER_ALL iterator type, all index types
+         * - ITER_GT iterator in HASH index (legacy)
+         */
+        if (index_def->type == TREE || type == ITER_ALL ||
+            (index_def->type == HASH && type == ITER_GT))
+            return 0;
+        /* Fall through. */
+    }
 
-	if (index_def->type == RTREE) {
-		unsigned d = index_def->opts.dimension;
-		if (part_count != 1 && part_count != d && part_count != d * 2) {
-			diag_set(ClientError, ER_KEY_PART_COUNT, d  * 2,
-				 part_count);
-			return -1;
-		}
-		if (part_count == 1) {
-			if (key_part_validate(FIELD_TYPE_ARRAY, key, 0, false))
-				return -1;
-			uint32_t array_size = mp_decode_array(&key);
-			if (array_size != d && array_size != d * 2) {
-				diag_set(ClientError, ER_RTREE_RECT, "Key", d,
-					 d * 2);
-				return -1;
-			}
-			for (uint32_t part = 0; part < array_size; part++) {
-				if (key_part_validate(FIELD_TYPE_NUMBER, key,
-						      0, false))
-					return -1;
-				mp_next(&key);
-			}
-		} else {
-			for (uint32_t part = 0; part < part_count; part++) {
-				if (key_part_validate(FIELD_TYPE_NUMBER, key,
-						      part, false))
-					return -1;
-				mp_next(&key);
-			}
-		}
-	} else {
+    if (index_def->type == RTREE) {
+        unsigned d = index_def->opts.dimension;
+        if (part_count != 1 && part_count != d && part_count != d * 2) {
+            diag_set(ClientError, ER_KEY_PART_COUNT, d * 2,
+                     part_count);
+            return -1;
+        }
+        if (part_count == 1) {
+            if (key_part_validate(FIELD_TYPE_ARRAY, key, 0, false))
+                return -1;
+            uint32_t array_size = mp_decode_array(&key);
+            if (array_size != d && array_size != d * 2) {
+                diag_set(ClientError, ER_RTREE_RECT, "Key", d,
+                         d * 2);
+                return -1;
+            }
+            for (uint32_t part = 0; part < array_size; part++) {
+                if (key_part_validate(FIELD_TYPE_NUMBER, key,
+                                      0, false))
+                    return -1;
+                mp_next(&key);
+            }
+        } else {
+            for (uint32_t part = 0; part < part_count; part++) {
+                if (key_part_validate(FIELD_TYPE_NUMBER, key,
+                                      part, false))
+                    return -1;
+                mp_next(&key);
+            }
+        }
+    } else if (index_def->type == TEXT) {
+        if ((part_count != index_def->key_def->part_count) &&
+            (part_count != index_def->key_def->part_count * 2)) {
+            diag_set(ClientError, ER_KEY_PART_COUNT,
+                     index_def->key_def->part_count * 2, part_count);
+            return -1;
+        }
+        if (part_count == index_def->key_def->part_count) {
+            const char *key_end;
+            if (key_validate_parts(index_def->key_def, key, part_count,
+                                   true, &key_end) != 0) {
+                return -1;
+            }
+        }
+    } else {
 		if (part_count > index_def->key_def->part_count) {
 			diag_set(ClientError, ER_KEY_PART_COUNT,
 				 index_def->key_def->part_count, part_count);
